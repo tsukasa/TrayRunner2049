@@ -1,0 +1,70 @@
+name: Release on Tag
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build (Release)
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Publish
+        run: dotnet publish TrayRunner2049 -c Release -o publish
+
+      - name: Zip artifacts
+        run: |
+          $tag = "${{ github.ref_name }}"
+          Compress-Archive -Path publish\*.*,LICENSE -DestinationPath "TrayRunner2049-$tag.zip"
+
+      - name: Get previous tag
+        id: get_prev_tag
+        run: |
+          $prev_tag = git tag --sort=-creatordate | Where-Object { $_ -ne "${{ github.ref_name }}" } | Select-Object -First 1
+          echo "prev_tag=$prev_tag" >> $env:GITHUB_OUTPUT
+
+      - name: Generate commit summary and compare link
+        id: release_notes
+        run: |
+          $prev="${{ steps.get_prev_tag.outputs.prev_tag }}"
+          $curr="${{ github.ref_name }}"
+          if ($prev) {
+            $log = git log $prev..$curr --pretty=format:"* %s"
+            $compare_url = "https://github.com/${{ github.repository }}/compare/$prev...$curr"
+            $body = "$log`n`n[Compare changes]($compare_url)"
+          } else {
+            $log = git log --pretty=format:"* %s"
+            $body = "$log"
+          }
+          $body | Set-Content release_body.md
+        shell: pwsh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: TrayRunner 2049 ${{ github.ref_name }}
+          body_path: release_body.md
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: TrayRunner2049-${{ github.ref_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
